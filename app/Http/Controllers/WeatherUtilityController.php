@@ -16,12 +16,18 @@ class WeatherUtilityController extends Controller
 
     public function convertTemperature(Request $request)
     {
-        $params = $this->validateParams($request, ['temperature', 'unit']);
+        $params = $request->only(['temperature', 'unit', 'city']);
+    
+        if (!isset($params['temperature']) || !is_numeric($params['temperature'])) {
+            return response()->json(['error' => 'Temperatura inválida'], 400);
+        }
+    
+        if (!isset($params['unit']) || !in_array(strtoupper($params['unit']), ['C', 'F', 'K'])) {
+            return response()->json(['error' => 'Unidade inválida'], 400);
+        }
+    
         $converted = $this->weatherService->convertTemperature($params);
-
-        return $converted
-            ? response()->json($converted)
-            : response()->json(['error' => 'Temperatura ou unidade inválida'], 400);
+        return response()->json($converted);
     }
 
     public function compareTemperature(Request $request)

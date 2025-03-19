@@ -110,7 +110,7 @@ class WeatherService
     protected function translateDescription($description)
     {
         $translations = [
-            'Clear sky' => 'ensolarado',
+            'Clear sky' => 'com o céu limpo',
             'Mainly clear' => 'predominantemente limpo',
             'Partly cloudy' => 'parcialmente nublado',
             'Overcast' => 'encoberto',
@@ -246,57 +246,83 @@ class WeatherService
         return ['city' => $normalizedCity, 'forecast' => $forecast];
     }
 
-    public function getYesterdayAverageTemp(array $params)
-    {
-        $coords = $this->getCoordinates($params);
-        $lat = $coords['lat'];
-        $lon = $coords['lon'];
-        $yesterday = date('Y-m-d', strtotime('yesterday'));
-        $apiUrl = env('API_BASE_URL');
-        $query = [
-            'latitude'   => $lat,
-            'longitude'  => $lon,
-            'daily'      => 'temperature_2m_max,temperature_2m_min',
-            'timezone'   => 'auto',
-            'start_date' => $yesterday,
-            'end_date'   => $yesterday
-        ];
-        $response = Http::get($apiUrl, $query);
-        $data = $response->json();
-        if (!isset($data['daily'])) return null;
-        $daily = $data['daily'];
-        $avgTemp = ($daily['temperature_2m_max'][0] + $daily['temperature_2m_min'][0]) / 2;
-        return round($avgTemp) . '°C';
+   public function getYesterdayAverageTemp(array $params)
+{
+    $coords = $this->getCoordinates($params);
+    $lat = $coords['lat'];
+    $lon = $coords['lon'];
+    $city = $coords['city'];
+    
+    $yesterday = date('Y-m-d', strtotime('yesterday'));
+    $apiUrl = env('API_BASE_URL');
+    
+    $query = [
+        'latitude'   => $lat,
+        'longitude'  => $lon,
+        'daily'      => 'temperature_2m_max,temperature_2m_min',
+        'timezone'   => 'auto',
+        'start_date' => $yesterday,
+        'end_date'   => $yesterday
+    ];
+
+    $response = Http::get($apiUrl, $query);
+    $data = $response->json();
+    
+    if (!isset($data['daily']['temperature_2m_max'][0]) || !isset($data['daily']['temperature_2m_min'][0])) {
+        return null;
     }
+
+    $avgTemp = ($data['daily']['temperature_2m_max'][0] + $data['daily']['temperature_2m_min'][0]) / 2;
+    
+    return [
+        'city' => $city,
+        'temperature' => round($avgTemp) . '°C'
+    ];
+}
+
+    
 
     public function convertTemperature(array $params)
     {
         $temperature = $params['temperature'] ?? null;
         $unit = strtoupper($params['unit'] ?? 'C');
-        if (!is_numeric($temperature)) return null;
+    
+        if (!is_numeric($temperature)) {
+            return null;
+        }
+    
         switch ($unit) {
             case 'F':
                 $converted = ($temperature * 9/5) + 32;
+                $convertedUnit = '°F';
                 break;
             case 'K':
                 $converted = $temperature + 273.15;
+                $convertedUnit = 'K';
                 break;
             case 'C':
                 $converted = $temperature;
+                $convertedUnit = '°C';
                 break;
             default:
                 return null;
         }
-        return ['originalTemperature' => $temperature . '°C', 'convertedTemperature' => $converted, 'unit' => $unit];
+        return [
+            'originalTemperature' => $temperature . '°C',
+            'convertedTemperature' => $converted . $convertedUnit,
+            'unit' => $unit
+        ];
     }
-
+    
     public function getSunriseSunset(array $params)
     {
         $coords = $this->getCoordinates($params);
         $lat = $coords['lat'];
         $lon = $coords['lon'];
+        $city = $coords['city'];  
         $today = date('Y-m-d');
         $apiUrl = env('API_BASE_URL');
+        
         $query = [
             'latitude'   => $lat,
             'longitude'  => $lon,
@@ -305,12 +331,19 @@ class WeatherService
             'start_date' => $today,
             'end_date'   => $today
         ];
+        
         $response = Http::get($apiUrl, $query);
         $data = $response->json();
+        
         if (!isset($data['daily'])) return null;
-        $daily = $data['daily'];
-        return ['sunrise' => $daily['sunrise'][0], 'sunset' => $daily['sunset'][0]];
+    
+        return [
+            'city'    => $city,
+            'sunrise' => $data['daily']['sunrise'][0],
+            'sunset'  => $data['daily']['sunset'][0]
+        ];
     }
+    
 
     public function getRainForecast(array $params)
     {
@@ -345,29 +378,26 @@ class WeatherService
     public function compareTemperature(array $params)
     {
         $current = $this->getCurrentWeather($params);
-        if (!$current) return null;
-        $yesterdayAvg = str_replace('°C', '', $this->getYesterdayAverageTemp($params));
+        if (!$current) return ['error' => 'Não foi possível obter os dados atuais'];
+    
+        $yesterdayData = $this->getYesterdayAverageTemp($params);
+        if (!$yesterdayData) return ['error' => 'Não foi possível obter a temperatura de ontem'];
+    
+        $yesterdayAvg = str_replace('°C', '', $yesterdayData['temperature']);
         $todayTemp = $current['temperature'];
-        if ($todayTemp > $yesterdayAvg) return [
-            'city' => $current['city'],
-            'todayTemperature' => $todayTemp . '°C',
-            'yesterdayAverageTemperature' => $yesterdayAvg . '°C',
-            'comparison' => "Hoje está mais quente do que ontem."
-        ];
-        if ($todayTemp < $yesterdayAvg) return [
-            'city' => $current['city'],
-            'todayTemperature' => $todayTemp . '°C',
-            'yesterdayAverageTemperature' => $yesterdayAvg . '°C',
-            'comparison' => "Hoje está mais frio do que ontem."
-        ];
+    
+        $comparison = "A temperatura de hoje é igual à de ontem.";
+        if ($todayTemp > $yesterdayAvg) $comparison = "Hoje está mais quente do que ontem.";
+        if ($todayTemp < $yesterdayAvg) $comparison = "Hoje está mais frio do que ontem.";
+    
         return [
             'city' => $current['city'],
             'todayTemperature' => $todayTemp . '°C',
             'yesterdayAverageTemperature' => $yesterdayAvg . '°C',
-            'comparison' => "A temperatura de hoje é igual à de ontem."
+            'comparison' => $comparison
         ];
     }
-
+    
     public function getDailyPhrase(array $params)
     {
         $current = $this->getCurrentWeather($params);
