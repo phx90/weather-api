@@ -28,7 +28,7 @@ Uma API de clima simples e RESTful construída com o Laravel Lumen. Esta API uti
 ## Instalação
 
 1. **Clone o repositório:**
-   git clone https://github.com/seu-usuario/weather-api.git
+   git clone https://github.com/phx90/weather-api.git
    cd weather-api
 
 2. **Instale as dependências:**
