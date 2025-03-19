@@ -8,8 +8,8 @@ class WeatherEndpointsTest extends TestCase
 {
     public function testCurrentWeatherEndpoint()
     {
-        $this->get('/api/weather/current?city=New%20York');
-        $this->seeStatusCode(200);
+        $this->get('/api/weather/current?city=Brasilia');
+        $this->assertResponseStatus(200);
         $this->seeJsonStructure([
             'city',
             'latitude',
@@ -24,20 +24,21 @@ class WeatherEndpointsTest extends TestCase
 
     public function testDailyPhraseEndpoint()
     {
-        $this->get('/api/weather/daily-phrase?city=Los%20Angeles');
-        $this->seeStatusCode(200);
-        $this->seeJsonStructure(['phrase']);
+        $this->get('/api/weather/daily-phrase?city=Brasilia');
+        $this->assertResponseStatus(200);
+        $this->seeJsonStructure(['frase']);
     }
 
-    public function testForecastEndpoint()
+    public function testForecast7DaysEndpoint()
     {
-        $this->get('/api/weather/forecast?city=Chicago');
-        $this->seeStatusCode(200);
+        $this->get('/api/weather/forecast?city=Brasilia');
+        $this->assertResponseStatus(200);
         $this->seeJsonStructure([
             'city',
             'forecast' => [
                 '*' => [
                     'date',
+                    'weekday',
                     'temperature_max',
                     'temperature_min',
                     'description',
@@ -49,14 +50,45 @@ class WeatherEndpointsTest extends TestCase
         ]);
     }
 
-    public function testConvertTemperatureEndpoint()
+    public function testYesterdayAverageEndpoint()
+    {
+        $this->get('/api/weather/yesterday-average?city=Brasilia');
+        $this->assertResponseStatus(200);
+        $this->seeJsonStructure(['temperaturaMediaOntem']);
+    }
+
+    public function testConvertTemperatureEndpointValid()
     {
         $this->get('/api/weather/convert?temperature=25&unit=F');
-        $this->seeStatusCode(200);
-        $this->seeJsonStructure([
-            'originalTemperature',
-            'convertedTemperature',
-            'unit'
-        ]);
+        $this->assertResponseStatus(200);
+        $this->seeJsonStructure(['originalTemperature', 'convertedTemperature', 'unit']);
+    }
+
+    public function testConvertTemperatureEndpointInvalid()
+    {
+        $this->get('/api/weather/convert?temperature=abc&unit=F');
+        $this->assertResponseStatus(400);
+        $this->seeJsonStructure(['error']);
+    }
+
+    public function testSunriseSunsetEndpoint()
+    {
+        $this->get('/api/weather/sunrise-sunset?city=Brasilia');
+        $this->assertResponseStatus(200);
+        $this->seeJsonStructure(['sunrise', 'sunset']);
+    }
+
+    public function testRainForecastEndpoint()
+    {
+        $this->get('/api/weather/rain-forecast?city=Brasilia');
+        $this->assertResponseStatus(200);
+        $this->seeJsonStructure(['city', 'rainForecast']);
+    }
+
+    public function testCompareTemperatureEndpoint()
+    {
+        $this->get('/api/weather/compare?city=Brasilia');
+        $this->assertResponseStatus(200);
+        $this->seeJsonStructure(['city', 'todayTemperature', 'yesterdayAverageTemperature', 'comparison']);
     }
 }

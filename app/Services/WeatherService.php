@@ -3,77 +3,40 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
+use IntlDateFormatter;
 
 class WeatherService
 {
     public function geocodeCity($city)
     {
         $city = ucwords(mb_strtolower(trim($city)));
-        $url = "https://nominatim.openstreetmap.org/search";
-        $response = Http::withHeaders([
-            'User-Agent' => 'WeatherAPI/1.0 (seu-email@exemplo.com)'
-        ])->get($url, [
-            'format'         => 'json',
-            'q'              => $city,
-            'limit'          => 1,
-            'addressdetails' => 1
-        ]);
+        $url = "https://geocoding-api.open-meteo.com/v1/search";
+        $response = Http::get($url, ['name' => $city, 'count' => 1]);
         $data = $response->json();
-        if (empty($data) || !isset($data[0]['lat']) || !isset($data[0]['lon'])) {
-            return null;
-        }
-        $address = $data[0]['address'] ?? [];
-        $normalizedCity = null;
-        if (isset($address['municipality'])) {
-            $normalizedCity = $address['municipality'];
-        }
-        if (!$normalizedCity && isset($address['city'])) {
-            $normalizedCity = $address['city'];
-        }
-        if (!$normalizedCity && isset($address['town'])) {
-            $normalizedCity = $address['town'];
-        }
-        if (!$normalizedCity && isset($address['village'])) {
-            $normalizedCity = $address['village'];
-        }
-        if (!$normalizedCity) {
-            $normalizedCity = $this->simplifyCityName($data[0]['display_name']);
-        }
+        if (empty($data) || !isset($data['results'][0])) return null;
+        $result = $data['results'][0];
         return [
-            'lat'  => $data[0]['lat'],
-            'lon'  => $data[0]['lon'],
-            'city' => $normalizedCity
+            'lat'  => $result['latitude'],
+            'lon'  => $result['longitude'],
+            'city' => $result['name']
         ];
-    }
-    
-      
-
-    private function simplifyCityName($displayName)
-    {
-        $parts = array_map('trim', explode(',', $displayName));
-        return $parts[0] ?? $displayName;
     }
 
     public function getCoordinates(array $params)
     {
-        if (isset($params['city']) && !empty($params['city'])) {
-            $geo = $this->geocodeCity(urldecode($params['city']));
-            if ($geo) {
-                $geo['city'] = urldecode($geo['city']);
-                return $geo;
-            }
+        $inputCity = isset($params['city']) ? urldecode($params['city']) : "";
+        if (!empty($inputCity)) {
+            $geo = $this->geocodeCity($inputCity);
+            if ($geo) return $geo;
         }
-        $latitude  = $params['lat'] ?? null;
+        $latitude = $params['lat'] ?? null;
         $longitude = $params['lon'] ?? null;
-        $city = $params['city'] ?? "Brasilia";
-
-        if (!$latitude || !$longitude) {
-            return [
-                'lat'  => env('DEFAULT_LATITUDE', -15.7801),
-                'lon'  => env('DEFAULT_LONGITUDE', -47.9292),
-                'city' => $city
-            ];
-        }
+        $city = !empty($inputCity) ? $inputCity : "Brasilia";
+        if (!$latitude || !$longitude) return [
+            'lat'  => env('DEFAULT_LATITUDE', -15.7801),
+            'lon'  => env('DEFAULT_LONGITUDE', -47.9292),
+            'city' => $city
+        ];
         return [
             'lat'  => $latitude,
             'lon'  => $longitude,
@@ -87,8 +50,7 @@ class WeatherService
         $closestIndex = null;
         $smallestDiff = PHP_INT_MAX;
         foreach ($times as $i => $time) {
-            $timeStamp = strtotime($time);
-            $diff = abs($timeStamp - $targetTimestamp);
+            $diff = abs(strtotime($time) - $targetTimestamp);
             if ($diff < $smallestDiff) {
                 $smallestDiff = $diff;
                 $closestIndex = $i;
@@ -132,6 +94,47 @@ class WeatherService
         return $mapping[$code] ?? ['description' => 'Unknown', 'icon' => '❓'];
     }
 
+    protected function simplifyCityName($displayName)
+    {
+        $parts = array_map('trim', explode(',', $displayName));
+        return $parts[0] ?? $displayName;
+    }
+
+    protected function translateDescription($description)
+    {
+        $translations = [
+            'Clear sky' => 'ensolarado',
+            'Mainly clear' => 'predominantemente limpo',
+            'Partly cloudy' => 'parcialmente nublado',
+            'Overcast' => 'encoberto',
+            'Fog' => 'com neblina',
+            'Depositing rime fog' => 'com neblina',
+            'Light drizzle' => 'com chuvisco leve',
+            'Moderate drizzle' => 'com chuvisco moderado',
+            'Dense drizzle' => 'com chuvisco intenso',
+            'Light freezing drizzle' => 'com chuvisco congelante leve',
+            'Dense freezing drizzle' => 'com chuvisco congelante intenso',
+            'Slight rain' => 'com chuva leve',
+            'Moderate rain' => 'com chuva moderada',
+            'Heavy rain' => 'com chuva forte',
+            'Light freezing rain' => 'com chuva congelante leve',
+            'Heavy freezing rain' => 'com chuva congelante forte',
+            'Slight snow fall' => 'com neve leve',
+            'Moderate snow fall' => 'com neve moderada',
+            'Heavy snow fall' => 'com neve forte',
+            'Snow grains' => 'com granizo',
+            'Slight rain showers' => 'com pancadas de chuva leves',
+            'Moderate rain showers' => 'com pancadas de chuva moderadas',
+            'Violent rain showers' => 'com pancadas de chuva intensas',
+            'Slight snow showers' => 'com pancadas de neve leves',
+            'Heavy snow showers' => 'com pancadas de neve fortes',
+            'Thunderstorm' => 'com tempestade',
+            'Thunderstorm with slight hail' => 'com tempestade e granizo leve',
+            'Thunderstorm with heavy hail' => 'com tempestade e granizo forte'
+        ];
+        return $translations[$description] ?? $description;
+    }
+
     public function getCurrentWeather(array $params)
     {
         $coords = $this->getCoordinates($params);
@@ -149,33 +152,26 @@ class WeatherService
         ];
         $response = Http::get($apiUrl, $query);
         $data = $response->json();
-        if (!isset($data['current_weather'])) {
-            return null;
-        }
+        if (!isset($data['current_weather'])) return null;
         $current = $data['current_weather'];
         $humidity = null;
         if (isset($data['hourly']['time'], $data['hourly']['relativehumidity_2m'])) {
-            $times = $data['hourly']['time'];
-            $humidities = $data['hourly']['relativehumidity_2m'];
-            $index = $this->findClosestTimeIndex($times, $current['time']);
-            if ($index !== null) {
-                $humidity = $humidities[$index];
-            }
+            $index = $this->findClosestTimeIndex($data['hourly']['time'], $current['time']);
+            if ($index !== null) $humidity = $data['hourly']['relativehumidity_2m'][$index];
         }
-        $mapping = $this->mapWeatherCode($current['weathercode']);
+        $weatherCode = array_key_exists('weathercode', $current) ? $current['weathercode'] : null;
+        $mapping = $weatherCode !== null ? $this->mapWeatherCode($weatherCode) : ['description' => 'Desconhecido', 'icon' => '❓'];
         $icon = $mapping['icon'];
-        if (isset($current['is_day']) && $current['is_day'] == 0 && $icon === '☀️') {
-            $icon = '🌙';
-        }
+        if (isset($current['is_day']) && $current['is_day'] == 0 && $icon === '☀️') $icon = '🌙';
         return [
-            'city'        => $normalizedCity,
-            'latitude'    => $lat,
-            'longitude'   => $lon,
+            'city' => $normalizedCity,
+            'latitude' => $lat,
+            'longitude' => $lon,
             'temperature' => $current['temperature'],
-            'humidity'    => $humidity,
-            'description' => $mapping['description'],
-            'icon'        => $icon,
-            'time'        => $current['time']
+            'humidity' => $humidity,
+            'description' => $this->translateDescription($mapping['description']),
+            'icon' => $icon,
+            'time' => $current['time']
         ];
     }
 
@@ -198,28 +194,26 @@ class WeatherService
         ];
         $response = Http::get($apiUrl, $query);
         $data = $response->json();
-        if (!isset($data['daily'])) {
-            return null;
-        }
+        if (!isset($data['daily'])) return null;
         $daily = $data['daily'];
         $forecast = [];
         $daysCount = count($daily['time']);
-        for ($i = 0; $i < $daysCount; $i++) {
+        $formatter = new IntlDateFormatter('pt_BR', IntlDateFormatter::FULL, IntlDateFormatter::NONE);
+        foreach ($daily['time'] as $i => $date) {
             $mapping = $this->mapWeatherCode($daily['weathercode'][$i]);
+            $weekday = $formatter->format(strtotime($date));
             $forecast[] = [
-                'date'            => $daily['time'][$i],
+                'date' => $date,
+                'weekday' => ucwords($weekday),
                 'temperature_max' => $daily['temperature_2m_max'][$i],
                 'temperature_min' => $daily['temperature_2m_min'][$i],
-                'description'     => $mapping['description'],
-                'icon'            => $mapping['icon'],
-                'sunrise'         => $daily['sunrise'][$i],
-                'sunset'          => $daily['sunset'][$i]
+                'description' => $this->translateDescription($mapping['description']),
+                'icon' => $mapping['icon'],
+                'sunrise' => $daily['sunrise'][$i],
+                'sunset' => $daily['sunset'][$i]
             ];
         }
-        return [
-            'city' => $normalizedCity,
-            'forecast' => $forecast
-        ];
+        return ['city' => $normalizedCity, 'forecast' => $forecast];
     }
 
     public function getYesterdayAverageTemp(array $params)
@@ -239,21 +233,17 @@ class WeatherService
         ];
         $response = Http::get($apiUrl, $query);
         $data = $response->json();
-        if (!isset($data['daily'])) {
-            return null;
-        }
+        if (!isset($data['daily'])) return null;
         $daily = $data['daily'];
         $avgTemp = ($daily['temperature_2m_max'][0] + $daily['temperature_2m_min'][0]) / 2;
-        return $avgTemp . '°C';
+        return round($avgTemp) . '°C';
     }
 
     public function convertTemperature(array $params)
     {
         $temperature = $params['temperature'] ?? null;
         $unit = strtoupper($params['unit'] ?? 'C');
-        if (!is_numeric($temperature)) {
-            return null;
-        }
+        if (!is_numeric($temperature)) return null;
         switch ($unit) {
             case 'F':
                 $converted = ($temperature * 9/5) + 32;
@@ -267,11 +257,7 @@ class WeatherService
             default:
                 return null;
         }
-        return [
-            'originalTemperature' => $temperature . '°C',
-            'convertedTemperature' => $converted,
-            'unit' => $unit
-        ];
+        return ['originalTemperature' => $temperature . '°C', 'convertedTemperature' => $converted, 'unit' => $unit];
     }
 
     public function getSunriseSunset(array $params)
@@ -291,79 +277,77 @@ class WeatherService
         ];
         $response = Http::get($apiUrl, $query);
         $data = $response->json();
-        if (!isset($data['daily'])) {
-            return null;
-        }
+        if (!isset($data['daily'])) return null;
         $daily = $data['daily'];
-        return [
-            'sunrise' => $daily['sunrise'][0],
-            'sunset'  => $daily['sunset'][0]
-        ];
+        return ['sunrise' => $daily['sunrise'][0], 'sunset' => $daily['sunset'][0]];
     }
 
     public function getRainForecast(array $params)
     {
         $forecastData = $this->get7DaysForecast($params);
-        if (!$forecastData) {
-            return null;
-        }
+        if (!$forecastData) return null;
         $forecast = $forecastData['forecast'];
+        $rainConditions = [
+            'com chuvisco leve',
+            'com chuvisco moderado',
+            'com chuvisco intenso',
+            'com chuva leve',
+            'com chuva moderada',
+            'com chuva forte',
+            'com pancadas de chuva leves',
+            'com pancadas de chuva moderadas',
+            'com pancadas de chuva intensas'
+        ];
+        $rainDays = [];
         foreach ($forecast as $day) {
-            if (in_array($day['description'], [
-                'Light drizzle', 'Moderate drizzle', 'Dense drizzle',
-                'Slight rain', 'Moderate rain', 'Heavy rain',
-                'Slight rain showers', 'Moderate rain showers', 'Violent rain showers'
-            ])) {
-                return ['city' => $forecastData['city'], 'rainForecast' => 'Rain is forecasted in some days over the next 7 days.'];
-            }
+            if (in_array($day['description'], $rainConditions)) $rainDays[] = $day['date'];
         }
-        return ['city' => $forecastData['city'], 'rainForecast' => 'No rain is forecasted over the next 7 days.'];
+        if (count($rainDays) > 0) return [
+            'city' => $forecastData['city'],
+            'rainForecast' => 'Previsão de chuva para os dias: ' . implode(', ', $rainDays) . '.'
+        ];
+        return [
+            'city' => $forecastData['city'],
+            'rainForecast' => 'Não há previsão de chuva para os próximos 7 dias.'
+        ];
     }
 
     public function compareTemperature(array $params)
     {
         $current = $this->getCurrentWeather($params);
-        if (!$current) {
-            return null;
-        }
+        if (!$current) return null;
         $yesterdayAvg = str_replace('°C', '', $this->getYesterdayAverageTemp($params));
         $todayTemp = $current['temperature'];
-        if ($todayTemp > $yesterdayAvg) {
-            return [
-                'city' => $current['city'],
-                'todayTemperature' => $todayTemp . '°C',
-                'yesterdayAverageTemperature' => $yesterdayAvg . '°C',
-                'comparison' => "Today is warmer than yesterday."
-            ];
-        }
-        if ($todayTemp < $yesterdayAvg) {
-            return [
-                'city' => $current['city'],
-                'todayTemperature' => $todayTemp . '°C',
-                'yesterdayAverageTemperature' => $yesterdayAvg . '°C',
-                'comparison' => "Today is colder than yesterday."
-            ];
-        }
+        if ($todayTemp > $yesterdayAvg) return [
+            'city' => $current['city'],
+            'todayTemperature' => $todayTemp . '°C',
+            'yesterdayAverageTemperature' => $yesterdayAvg . '°C',
+            'comparison' => "Hoje está mais quente do que ontem."
+        ];
+        if ($todayTemp < $yesterdayAvg) return [
+            'city' => $current['city'],
+            'todayTemperature' => $todayTemp . '°C',
+            'yesterdayAverageTemperature' => $yesterdayAvg . '°C',
+            'comparison' => "Hoje está mais frio do que ontem."
+        ];
         return [
             'city' => $current['city'],
             'todayTemperature' => $todayTemp . '°C',
             'yesterdayAverageTemperature' => $yesterdayAvg . '°C',
-            'comparison' => "Today's temperature is the same as yesterday."
+            'comparison' => "A temperatura de hoje é igual à de ontem."
         ];
     }
 
     public function getDailyPhrase(array $params)
     {
         $current = $this->getCurrentWeather($params);
-        if (!$current) {
-            return null;
-        }
+        if (!$current) return null;
         $city = $current['city'];
-        $phrase = "Today in " . $city . " is " . $current['description'] .
-                  " with a temperature of " . $current['temperature'] . "°C";
-        if ($current['humidity'] !== null) {
-            return $phrase . " and humidity of " . $current['humidity'] . "%.";
-        }
-        return $phrase . ".";
+        $temp = round($current['temperature']);
+        $humidity = $current['humidity'];
+        $desc = $current['description'];
+        $phrase = "Hoje está {$desc} em {$city}, com {$temp}°C";
+        if ($humidity !== null) return $phrase . " e umidade de {$humidity}%. Aproveite o dia!";
+        return $phrase . ". Aproveite o dia!";
     }
 }
