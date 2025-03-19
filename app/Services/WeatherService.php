@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
+use Illuminate\Http\Client\RequestException;
 use IntlDateFormatter;
 
 class WeatherService
@@ -10,17 +11,23 @@ class WeatherService
     public function geocodeCity($city)
     {
         $city = ucwords(mb_strtolower(trim($city)));
-        $url = "https://geocoding-api.open-meteo.com/v1/search";
-        $response = Http::get($url, ['name' => $city, 'count' => 1]);
+        $url = env('GEOCODING_API_URL', 'https://geocoding-api.open-meteo.com/v1/search');
+    
+        $response = Http::get($url, [
+            'name' => $city,
+            'count' => env('GEOCODING_API_COUNT', 1)
+        ]);
+    
         $data = $response->json();
         if (empty($data) || !isset($data['results'][0])) return null;
-        $result = $data['results'][0];
+    
         return [
-            'lat'  => $result['latitude'],
-            'lon'  => $result['longitude'],
-            'city' => $result['name']
+            'lat'  => $data['results'][0]['latitude'],
+            'lon'  => $data['results'][0]['longitude'],
+            'city' => $data['results'][0]['name']
         ];
     }
+    
 
     public function getCoordinates(array $params)
     {
@@ -137,42 +144,65 @@ class WeatherService
 
     public function getCurrentWeather(array $params)
     {
-        $coords = $this->getCoordinates($params);
-        $lat = $coords['lat'];
-        $lon = $coords['lon'];
-        $normalizedCity = $coords['city'];
-        $apiUrl = env('API_BASE_URL');
-        $query = [
-            'latitude'         => $lat,
-            'longitude'        => $lon,
-            'current_weather'  => 'true',
-            'hourly'           => 'relativehumidity_2m',
-            'temperature_unit' => 'celsius',
-            'timezone'         => 'auto'
-        ];
-        $response = Http::get($apiUrl, $query);
-        $data = $response->json();
-        if (!isset($data['current_weather'])) return null;
-        $current = $data['current_weather'];
-        $humidity = null;
-        if (isset($data['hourly']['time'], $data['hourly']['relativehumidity_2m'])) {
-            $index = $this->findClosestTimeIndex($data['hourly']['time'], $current['time']);
-            if ($index !== null) $humidity = $data['hourly']['relativehumidity_2m'][$index];
+        try {
+            $coords = $this->getCoordinates($params);
+            $lat = $coords['lat'];
+            $lon = $coords['lon'];
+            $normalizedCity = $coords['city'];
+            $apiUrl = env('API_BASE_URL');
+    
+            $query = [
+                'latitude'         => $lat,
+                'longitude'        => $lon,
+                'current_weather'  => 'true',
+                'hourly'           => 'relativehumidity_2m',
+                'temperature_unit' => 'celsius',
+                'timezone'         => 'auto'
+            ];
+    
+            $response = Http::get($apiUrl, $query);
+    
+            if (!$response->successful()) {
+                throw new RequestException($response);
+            }
+    
+            $data = $response->json();
+    
+            if (!isset($data['current_weather'])) {
+                return ['error' => 'Dados climáticos não disponíveis no momento.'];
+            }
+    
+            $current = $data['current_weather'];
+            $humidity = null;
+    
+            if (isset($data['hourly']['time'], $data['hourly']['relativehumidity_2m'])) {
+                $index = $this->findClosestTimeIndex($data['hourly']['time'], $current['time']);
+                $humidity = $index !== null ? $data['hourly']['relativehumidity_2m'][$index] : null;
+            }
+    
+            $weatherCode = $current['weathercode'] ?? null;
+            $mapping = $weatherCode !== null ? $this->mapWeatherCode($weatherCode) : ['description' => 'Desconhecido', 'icon' => '❓'];
+            $icon = $mapping['icon'];
+    
+            if (($current['is_day'] ?? 1) == 0 && $icon === '☀️') {
+                $icon = '🌙';
+            }
+    
+            return [
+                'city'        => $normalizedCity,
+                'latitude'    => $lat,
+                'longitude'   => $lon,
+                'temperature' => $current['temperature'],
+                'humidity'    => $humidity,
+                'description' => $this->translateDescription($mapping['description']),
+                'icon'        => $icon,
+                'time'        => $current['time']
+            ];
+        } catch (RequestException $e) {
+            return ['error' => 'Falha na conexão com o serviço de clima. Tente novamente mais tarde.'];
+        } catch (\Exception $e) {
+            return ['error' => 'Ocorreu um erro inesperado ao obter os dados do clima.'];
         }
-        $weatherCode = array_key_exists('weathercode', $current) ? $current['weathercode'] : null;
-        $mapping = $weatherCode !== null ? $this->mapWeatherCode($weatherCode) : ['description' => 'Desconhecido', 'icon' => '❓'];
-        $icon = $mapping['icon'];
-        if (isset($current['is_day']) && $current['is_day'] == 0 && $icon === '☀️') $icon = '🌙';
-        return [
-            'city' => $normalizedCity,
-            'latitude' => $lat,
-            'longitude' => $lon,
-            'temperature' => $current['temperature'],
-            'humidity' => $humidity,
-            'description' => $this->translateDescription($mapping['description']),
-            'icon' => $icon,
-            'time' => $current['time']
-        ];
     }
 
     public function get7DaysForecast(array $params)
