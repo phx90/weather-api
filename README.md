@@ -40,14 +40,25 @@ Uma API de clima simples e RESTful construída com o Laravel Lumen. Esta API uti
    - Edite o arquivo .env e defina as seguintes variáveis:
 
      APP_NAME=WeatherAPI
+     
      APP_ENV=local
+     
      APP_DEBUG=true
+     
      APP_URL=http://localhost:8000
 
-     API_BASE_URL=https://api.open-meteo.com/v1/forecast
+     API_BASE_URL=https://api.open-meteo.com/v1/
+     
+     GEOCODING_API_URL=https://geocoding-api.open-meteo.com/v1/search
+     
+     GEOCODING_API_COUNT=1
+     
      DEFAULT_CITY=Brasilia
+     
      DEFAULT_LATITUDE=-15.7801
+     
      DEFAULT_LONGITUDE=-47.9292
+     
 
 4. **(Opcional) Configure o CA Bundle do PHP:**
 
